@@ -1,193 +1,304 @@
-import sqlite3
-import datetime
-from getpass import getpass
-import random
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.5</version>
+    </parent>
+    <groupId>com.bank</groupId>
+    <artifactId>bank-api</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <properties><java.version>17</java.version></properties>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>0.11.5</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>0.11.5</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>0.11.5</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
 
-DB_NAME = "bank.db"
 
-class BankSystem:
-    def __init__(self):
-        self.conn = sqlite3.connect(DB_NAME)
-        self.create_tables()
+spring.datasource.url=jdbc:mysql://localhost:3306/bankdb?createDatabaseIfNotExist=true
+spring.datasource.username=root
+spring.datasource.password=root
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+jwt.secret=thisIsASecretKeyForJwtMustBeAtLeast256BitsLongForSecurity
+jwt.expiration=86400000
 
-    def create_tables(self):
-        cur = self.conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS accounts (
-                acc_no INTEGER PRIMARY KEY,
-                name TEXT NOT NULL,
-                pin TEXT NOT NULL,
-                balance REAL DEFAULT 0,
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+
+package com.bank;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class BankApiApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(BankApiApplication.class, args);
+    }
+}
+
+
+package com.bank.model;
+import jakarta.persistence.*;
+import lombok.Data;
+
+@Entity @Data @Table(name = "users")
+public class User {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    @Column(unique = true) private String username;
+    private String password;
+    private String role; // ROLE_CUSTOMER or ROLE_ADMIN
+}
+
+package com.bank.model;
+import jakarta.persistence.*;
+import lombok.Data;
+import org.hibernate.annotations.CreationTimestamp;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Entity @Data @Table(name = "accounts")
+public class Account {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    @Column(unique = true, nullable = false)
+    private Long accountNumber;
+    @OneToOne @JoinColumn(name = "user_id")
+    private User user;
+    @Column(nullable = false)
+    private BigDecimal balance = BigDecimal.ZERO;
+    @CreationTimestamp
+    private LocalDateTime createdAt;
+}
+
+package com.bank.model;
+import jakarta.persistence.*;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+
+@Entity @Data @NoArgsConstructor @Table(name = "transactions")
+public class Transaction {
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+    private Long accountNumber;
+    private String type;
+    private BigDecimal amount;
+    private BigDecimal balanceAfter;
+    @CreationTimestamp private LocalDateTime timestamp;
+    private String note;
+
+    public Transaction(Long accNo, String type, BigDecimal amt, BigDecimal bal, String note) {
+        this.accountNumber = accNo; this.type = type; this.amount = amt;
+        this.balanceAfter = bal; this.note = note;
+    }
+}
+
+package com.bank.security;
+import io.jsonwebtoken.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+import java.util.Date;
+
+@Component
+public class JwtUtil {
+    @Value("${jwt.secret}") private String secret;
+    @Value("${jwt.expiration}") private Long expiration;
+
+    public String generateToken(String username) {
+        return Jwts.builder()
+               .setSubject(username)
+               .setIssuedAt(new Date())
+               .setExpiration(new Date(System.currentTimeMillis() + expiration))
+               .signWith(SignatureAlgorithm.HS512, secret)
+               .compact();
+    }
+    public String getUsernameFromToken(String token) {
+        return Jwts.parser().setSigningKey(secret).parseClaimsJws(token).getBody().getSubject();
+    }
+    public boolean validateToken(String token) {
+        try { Jwts.parser().setSigningKey(secret).parseClaimsJws(token); return true; }
+        catch (Exception e) { return false; }
+    }
+}
+
+
+package com.bank.config;
+import com.bank.security.JwtAuthFilter;
+import org.springframework.context.annotation.*;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+@Configuration
+public class SecurityConfig {
+    @Bean public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
+    @Bean public JwtAuthFilter jwtAuthFilter() { return new JwtAuthFilter(); }
+    @Bean public AuthenticationManager authenticationManager(AuthenticationConfiguration c) throws Exception {
+        return c.getAuthenticationManager();
+    }
+    @Bean
+    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+        http.csrf().disable()
+           .authorizeHttpRequests(auth -> auth
+               .requestMatchers("/api/auth/**").permitAll()
+               .requestMatchers("/api/admin/**").hasRole("ADMIN")
+               .anyRequest().authenticated()
             )
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                acc_no INTEGER,
-                type TEXT,
-                amount REAL,
-                balance_after REAL,
-                timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-                note TEXT,
-                FOREIGN KEY(acc_no) REFERENCES accounts(acc_no)
-            )
-        """)
-        self.conn.commit()
+           .sessionManagement().sessionCreationPolicy(SessionCreationPolicy.STATELESS)
+           .addFilterBefore(jwtAuthFilter(), UsernamePasswordAuthenticationFilter.class);
+        return http.build();
+    }
+}
 
-    def generate_acc_no(self):
-        while True:
-            acc_no = random.randint(100000, 999999)
-            cur = self.conn.cursor()
-            cur.execute("SELECT 1 FROM accounts WHERE acc_no=?", (acc_no,))
-            if not cur.fetchone():
-                return acc_no
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
+import 'bootstrap/dist/css/bootstrap.min.css';
 
-    def create_account(self, name, pin):
-        if len(pin)!= 4 or not pin.isdigit():
-            return "PIN must be 4 digits"
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Login />} />
+        <Route path="/dashboard" element={<Dashboard />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+export default App;
 
-        acc_no = self.generate_acc_no()
-        cur = self.conn.cursor()
-        cur.execute("INSERT INTO accounts (acc_no, name, pin, balance) VALUES (?,?,?, 0)",
-                    (acc_no, name, pin))
-        self.conn.commit()
-        return f"Account created. Your account number: {acc_no}"
+import { useState, useEffect } from 'react';
+import axios from 'axios';
+import { Card, Table, Button, Container } from 'react-bootstrap';
 
-    def authenticate(self, acc_no, pin):
-        cur = self.conn.cursor()
-        cur.execute("SELECT name, balance FROM accounts WHERE acc_no=? AND pin=?", (acc_no, pin))
-        return cur.fetchone() # Returns (name, balance) or None
+function Dashboard() {
+  const [balance, setBalance] = useState(0);
+  const [transactions, setTransactions] = useState([]);
+  const token = localStorage.getItem('token');
 
-    def get_balance(self, acc_no):
-        cur = self.conn.cursor()
-        cur.execute("SELECT balance FROM accounts WHERE acc_no=?", (acc_no,))
-        res = cur.fetchone()
-        return res[0] if res else None
+  const api = axios.create({
+    baseURL: 'http://localhost:8080/api',
+    headers: { Authorization: `Bearer ${token}` }
+  });
 
-    def log_transaction(self, acc_no, trans_type, amount, note=""):
-        balance = self.get_balance(acc_no)
-        cur = self.conn.cursor()
-        cur.execute("""
-            INSERT INTO transactions (acc_no, type, amount, balance_after, note)
-            VALUES (?,?,?,?,?)
-        """, (acc_no, trans_type, amount, balance, note))
-        self.conn.commit()
+  const fetchData = async () => {
+    const bal = await api.get('/accounts/balance');
+    const txns = await api.get('/transactions/mini-statement?limit=5');
+    setBalance(bal.data);
+    setTransactions(txns.data);
+  };
 
-    def deposit(self, acc_no, amount):
-        if amount <= 0: return "Amount must be positive"
-        cur = self.conn.cursor()
-        cur.execute("UPDATE accounts SET balance = balance +? WHERE acc_no=?", (amount, acc_no))
-        self.conn.commit()
-        self.log_transaction(acc_no, "DEPOSIT", amount)
-        return f"Deposited ${amount:.2f}. New balance: ${self.get_balance(acc_no):.2f}"
+  useEffect(() => { fetchData(); }, []);
 
-    def withdraw(self, acc_no, amount):
-        if amount <= 0: return "Amount must be positive"
-        if self.get_balance(acc_no) < amount: return "Insufficient funds"
-
-        cur = self.conn.cursor()
-        cur.execute("UPDATE accounts SET balance = balance -? WHERE acc_no=?", (amount, acc_no))
-        self.conn.commit()
-        self.log_transaction(acc_no, "WITHDRAW", amount)
-        return f"Withdrew ${amount:.2f}. New balance: ${self.get_balance(acc_no):.2f}"
-
-    def transfer(self, from_acc, to_acc, amount):
-        if amount <= 0: return "Amount must be positive"
-        if self.get_balance(from_acc) < amount: return "Insufficient funds"
-        if not self.account_exists(to_acc): return "Recipient account not found"
-        if from_acc == to_acc: return "Cannot transfer to same account"
-
-        cur = self.conn.cursor()
-        cur.execute("UPDATE accounts SET balance = balance -? WHERE acc_no=?", (amount, from_acc))
-        cur.execute("UPDATE accounts SET balance = balance +? WHERE acc_no=?", (amount, to_acc))
-        self.conn.commit()
-
-        self.log_transaction(from_acc, "TRANSFER_OUT", amount, f"To {to_acc}")
-        self.log_transaction(to_acc, "TRANSFER_IN", amount, f"From {from_acc}")
-        return f"Transferred ${amount:.2f} to {to_acc}. New balance: ${self.get_balance(from_acc):.2f}"
-
-    def account_exists(self, acc_no):
-        cur = self.conn.cursor()
-        cur.execute("SELECT 1 FROM accounts WHERE acc_no=?", (acc_no,))
-        return cur.fetchone() is not None
-
-    def transaction_history(self, acc_no, limit=10):
-        cur = self.conn.cursor()
-        cur.execute("""
-            SELECT type, amount, balance_after, timestamp, note
-            FROM transactions WHERE acc_no=?
-            ORDER BY timestamp DESC LIMIT?
-        """, (acc_no, limit))
-        return cur.fetchall()
+  return (
+    <Container className="mt-4">
+      <Card>
+        <Card.Body>
+          <Card.Title>Current Balance: ${balance.toFixed(2)}</Card.Title>
+          <h5>Mini Statement</h5>
+          <Table striped bordered hover>
+            <thead><tr><th>Type</th><th>Amount</th><th>Balance</th><th>Date</th><th>Note</th></tr></thead>
+            <tbody>
+              {transactions.map(t => (
+                <tr key={t.id}>
+                  <td>{t.type}</td>
+                  <td>${t.amount}</td>
+                  <td>${t.balanceAfter}</td>
+                  <td>{new Date(t.timestamp).toLocaleString()}</td>
+                  <td>{t.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+          <Button onClick={fetchData}>Refresh</Button>
+        </Card.Body>
+      </Card>
+    </Container>
+  );
+}
+export default Dashboard;
 
 
+FROM node:18 AS build
+WORKDIR /app
+COPY package*.json./
+RUN npm install
+COPY..
+RUN npm run build
 
-def main():
-    bank = BankSystem()
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
 
-    while True:
-        print("\n=== Bank Management System ===")
-        print("1. Create Account")
-        print("2. Login")
-        print("3. Exit")
-        choice = input("Select: ")
+version: '3.8'
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: bankdb
+    ports: ["3306:3306"]
+  backend:
+    build:./bank-api
+    ports: ["8080:8080"]
+    depends_on: [mysql]
+  frontend:
+    build:./bank-ui
+    ports: ["80:80"]
 
-        if choice == "1":
-            name = input("Enter your name: ")
-            pin = getpass("Set 4-digit PIN: ")
-            print(bank.create_account(name, pin))
 
-        elif choice == "2":
-            try:
-                acc_no = int(input("Account number: "))
-                pin = getpass("PIN: ")
-            except ValueError:
-                print("Invalid input")
-                continue
-
-            user = bank.authenticate(acc_no, pin)
-            if not user:
-                print("Authentication failed")
-                continue
-
-            name, _ = user
-            print(f"\nWelcome, {name}")
-
-            while True:
-                print("\n1. Check Balance 2. Deposit 3. Withdraw")
-                print("4. Transfer 5. Transaction History 6. Logout")
-                op = input("Select: ")
-
-                if op == "1":
-                    print(f"Balance: ${bank.get_balance(acc_no):.2f}")
-                elif op == "2":
-                    amt = float(input("Amount to deposit: $"))
-                    print(bank.deposit(acc_no, amt))
-                elif op == "3":
-                    amt = float(input("Amount to withdraw: $"))
-                    print(bank.withdraw(acc_no, amt))
-                elif op == "4":
-                    to_acc = int(input("Recipient account no: "))
-                    amt = float(input("Amount: $"))
-                    print(bank.transfer(acc_no, to_acc, amt))
-                elif op == "5":
-                    history = bank.transaction_history(acc_no)
-                    print("\n**Transaction History**")
-                    print("| Type | Amount | Balance | Date | Note |")
-                    print("| --- | --- | --- |")
-                    for t in history:
-                        print(f"| {t[0]} | ${t[1]:.2f} | ${t[2]:.2f} | {t[3][:16]} | {t[4]} |")
-                elif op == "6":
-                    break
-                else:
-                    print("Invalid option")
-
-        elif choice == "3":
-            break
-        else:
-            print("Invalid choice")
-
-if __name__ == "__main__":
-    main()
- Bank-management-system-
+                
